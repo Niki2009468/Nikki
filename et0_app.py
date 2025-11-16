@@ -85,8 +85,6 @@ st.markdown(
     - Wüstenregionen: **6 – 8+ mm/Tag**
     """
 )
-
-
 import pandas as pd
 
 st.subheader("🔥 Dürreindex (ET₀ – Niederschlag)")
