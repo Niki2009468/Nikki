@@ -85,38 +85,82 @@ st.markdown(
     - Wüstenregionen: **6 – 8+ mm/Tag**
     """
 )
+
+import streamlit as st
+import requests
 import pandas as pd
 
-st.subheader("🔥 Dürreindex (ET₀ – Niederschlag)")
+st.set_page_config(page_title="ET₀ & Dürreindex", layout="centered")
 
-# --- Regen-Daten holen (Open-Meteo) ---
-rain_url = "https://api.open-meteo.com/v1/forecast"
-params_rain = {
-    "latitude": lat,
-    "longitude": lon,
-    "daily": "precipitation_sum",
-    "timezone": "auto"
+st.title("💧 Referenz-Evapotranspiration ET₀ (FAO) & Dürreindex")
+
+# -----------------------------
+# Standorte
+# -----------------------------
+CITIES = {
+    "Darmstadt, Deutschland": (49.8728, 8.6512),
+    "Tucson, USA": (32.2226, -110.9747),
+    "Fortaleza, Brasilien": (-3.7319, -38.5267),
+    "Malolos, Philippinen": (14.8443, 120.8114),
 }
 
-rain_data = requests.get(rain_url, params=params_rain).json()
-rain_dates = rain_data["daily"]["time"]
-rain_values = rain_data["daily"]["precipitation_sum"]
+city = st.selectbox("📍 Standort auswählen", list(CITIES.keys()))
+lat, lon = CITIES[city]
 
-df_rain = pd.DataFrame({
-    "date": pd.to_datetime(rain_dates),
-    "rain": rain_values
+st.write(f"Koordinaten: {lat:.4f}, {lon:.4f}")
+
+# -----------------------------
+# Daten von Open-Meteo holen
+# -----------------------------
+def fetch_et0_and_rain(lat, lon, past_days=7, forecast_days=7):
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "hourly": "et0_fao_evapotranspiration",
+        "daily": "precipitation_sum",
+        "timezone": "auto",
+        "past_days": past_days,
+        "forecast_days": forecast_days,
+    }
+    r = requests.get(url, params=params, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+with st.spinner("Lade ET₀- und Niederschlagsdaten von Open-Meteo…"):
+    data = fetch_et0_and_rain(lat, lon)
+
+# -----------------------------
+# 1) ET₀ – stündlich ➜ täglich
+# -----------------------------
+hourly = data["hourly"]
+df_hourly = pd.DataFrame({
+    "time": pd.to_datetime(hourly["time"]),
+    "et0": hourly["et0_fao_evapotranspiration"],
 })
+df_hourly["date"] = df_hourly["time"].dt.normalize()  # nur Datum
 
-# --- ET₀ Daten (aus deiner bestehenden Berechnung) ---
-df_et0["date"] = pd.to_datetime(df_et0["date"])
+df_et0_daily = (
+    df_hourly.groupby("date", as_index=False)["et0"]
+    .sum()
+    .sort_values("date")
+)
 
-# --- Zusammenführen ---
-df_combined = pd.merge(df_et0, df_rain, on="date", how="inner")
+# -----------------------------
+# 2) Niederschlag – täglich
+# -----------------------------
+daily = data["daily"]
+df_rain = pd.DataFrame({
+    "date": pd.to_datetime(daily["time"]),
+    "rain": daily["precipitation_sum"],
+}).sort_values("date")
 
-# --- Dürreindex berechnen ---
+# -----------------------------
+# 3) Dürreindex berechnen
+# -----------------------------
+df_combined = pd.merge(df_et0_daily, df_rain, on="date", how="inner")
 df_combined["drought"] = df_combined["et0"] - df_combined["rain"]
 
-# --- Klassifikation ---
 def classify_drought(x):
     if x < 0:
         return "🟢 Nass"
@@ -129,11 +173,38 @@ def classify_drought(x):
 
 df_combined["status"] = df_combined["drought"].apply(classify_drought)
 
-# --- Plot ---
+# -----------------------------
+# 4) Charts anzeigen
+# -----------------------------
+st.subheader("📊 ET₀ – tägliche Referenzverdunstung")
 st.line_chart(
-    df_combined.set_index("date")[["drought"]],
-    height=300
+    df_et0_daily.set_index("date")["et0"],
+    height=250
 )
+
+st.caption("Hinweis: ET₀ ist aus stündlichen Werten summiert (mm/Tag).")
+
+st.subheader("🌧 Niederschlag (mm/Tag)")
+st.bar_chart(
+    df_rain.set_index("date")["rain"],
+    height=250
+)
+
+st.subheader("🔥 Dürreindex (ET₀ – Niederschlag)")
+st.line_chart(
+    df_combined.set_index("date")["drought"],
+    height=250
+)
+
+# Letzter Tag zusammengefasst
+last = df_combined.iloc[-1]
+st.markdown(
+    f"**Letzter Tag:** {last['date'].date()} – "
+    f"Dürreindex: `{last['drought']:.2f} mm/Tag` → {last['status']}"
+)
+
+with st.expander("🔍 Details (Tabelle)"):
+    st.dataframe(df_combined.reset_index(drop=True))
 
 # --- Tabelle als Übersicht ---
 with st.expander("Details – Dürreindex"):
