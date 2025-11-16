@@ -57,3 +57,37 @@ df_precip = pd.DataFrame({
     "Datum": days,
     "Niederschlag": precip
 })
+
+# ----------------------------------------
+# 💦 ET0 aus separater Agriculture API laden
+# ----------------------------------------
+
+st.subheader("💧 Referenz-Evapotranspiration ET₀ (mm/Tag)")
+
+url_et0 = (
+    "https://api.open-meteo.com/v1/agrometeo"
+    f"?latitude={lat}&longitude={lon}"
+    "&daily=et0_fao_evapotranspiration"
+    "&forecast_days=7&timezone=auto"
+)
+
+res_et0 = requests.get(url_et0).json()
+
+# Prüfe, ob ET0-Daten verfügbar sind
+if "daily" in res_et0 and "et0_fao_evapotranspiration" in res_et0["daily"]:
+    et0_days = res_et0["daily"]["time"]
+    et0_values = res_et0["daily"]["et0_fao_evapotranspiration"]
+
+    df_et0 = pd.DataFrame({
+        "Datum": et0_days,
+        "ET0 (mm)": et0_values
+    })
+
+    st.line_chart(df_et0, x="Datum", y="ET0 (mm)")
+
+    # Letzter Wert als Zahl
+    st.metric("Letzter ET₀ Wert", f"{et0_values[-1]} mm")
+
+else:
+    st.warning("⚠️ Für diesen Standort liefert die ET₀-API keine Daten.")
+    st.json(res_et0)
