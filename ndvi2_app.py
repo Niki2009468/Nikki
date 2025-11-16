@@ -108,3 +108,71 @@ with st.spinner("Hole NASA-Daten…"):
             with st.expander("🔍 Details"):
                 st.write("Koordinaten:", lat, lon)
                 st.write("MODIS Datum:", modis_date)
+
+
+# --- NDVI Zeitreihe (letzte 10 MODIS-Datenpunkte) ---
+st.subheader("📈 NDVI – Zeitreihe (letzte 10 Messungen)")
+
+def get_ndvi_time_series(lat, lon, limit=10):
+    # 1) Liste aller MODIS-Daten
+    url = f"{BASE}/{PRODUCT}/dates"
+    dates_data, err = fetch(url, {"latitude": lat, "longitude": lon})
+    if err:
+        return None, err
+    
+    dates = dates_data.get("dates", [])
+    if len(dates) == 0:
+        return None, "Keine MODIS-Zeitpunkte gefunden."
+
+    # Nur letzte N MODIS-Punkte nehmen
+    last_dates = dates[-limit:]
+
+    records = []
+
+    # 2) NDVI für jedes Datum abrufen
+    for d in last_dates:
+        modis_date = d["modis_date"]
+        calendar_date = d["calendar_date"]
+
+        url = f"{BASE}/{PRODUCT}/subset"
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "startDate": modis_date,
+            "endDate": modis_date,
+            "kmAboveBelow": 0,
+            "kmLeftRight": 0
+        }
+
+        data, err2 = fetch(url, params)
+        if err2:
+            continue
+
+        # NDVI-Band extrahieren
+        for band in data.get("subset", []):
+            if band.get("band") == "250m_16_days_NDVI":
+                raw_values = band.get("data", [])
+                if len(raw_values) == 0:
+                    continue
+                ndvi_value = statistics.fmean(raw_values) * 0.0001
+                records.append({
+                    "date": calendar_date,
+                    "ndvi": ndvi_value
+                })
+
+    if len(records) == 0:
+        return None, "Keine NDVI-Zeitreihe gefunden."
+
+    return records, None
+
+
+# --- Plot Zeitreihe ---
+series, serr = get_ndvi_time_series(lat, lon)
+
+if serr:
+    st.error(serr)
+else:
+    df_ts = pd.DataFrame(series)
+    df_ts["date"] = pd.to_datetime(df_ts["date"])
+
+    st.line_chart(df_ts.set_index("date"))
