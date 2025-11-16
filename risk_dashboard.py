@@ -70,7 +70,13 @@ def get_current_ndvi(lat, lon):
 # -----------------------------------------------------------
 # 2) DÜRREINDEX (ET0 - REGEN)
 # -----------------------------------------------------------
+
 def get_drought(lat, lon):
+    """
+    Berechnet den Dürreindex für den letzten vollständigen Tag:
+    Dürreindex = ET0 (mm/Tag) - Niederschlag (mm/Tag)
+    Datenquelle: Open-Meteo (stündliche ET0 + täglicher Niederschlag)
+    """
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
@@ -81,25 +87,37 @@ def get_drought(lat, lon):
         "past_days": 3,
         "forecast_days": 0,
     }
-    data = requests.get(url, params).json()
 
-    # ET0 DAILY (sum hourly)
+    data = requests.get(url, params=params, timeout=20).json()
+
+    # --- ET0: stündlich -> täglich summieren ---
+    hourly = data["hourly"]
     df_hourly = pd.DataFrame({
-        "time": pd.to_datetime(data["hourly"]["time"]),
-        "et0": data["hourly"]["et0_fao_evapotranspiration"],
+        "time": pd.to_datetime(hourly["time"]),
+        "et0": hourly["et0_fao_evapotranspiration"],
     })
-    df_hourly["date"] = df_hourly["time"].dt.date
-    df_et0 = df_hourly.groupby("date")["et0"].sum().reset_index()
+    # Nur das Datum extrahieren (ohne Uhrzeit)
+    df_hourly["date"] = df_hourly["time"].dt.normalize()
 
-    # DAILY RAIN
+    df_et0_daily = (
+        df_hourly.groupby("date", as_index=False)["et0"]
+        .sum()
+        .sort_values("date")
+    )
+
+    # --- Niederschlag: tägliche Summen ---
+    daily = data["daily"]
     df_rain = pd.DataFrame({
-        "date": pd.to_datetime(data["daily"]["time"]).dt.date,
-        "rain": data["daily"]["precipitation_sum"],
-    })
+        "date": pd.to_datetime(daily["time"]),
+        "rain": daily["precipitation_sum"],
+    }).sort_values("date")
 
-    df = pd.merge(df_et0, df_rain, on="date")
+    # --- ET0 & Regen mergen ---
+    df = pd.merge(df_et0_daily, df_rain, on="date", how="inner")
+
+    # Letzter Tag
     last = df.iloc[-1]
-    drought_index = last["et0"] - last["rain"]
+    drought_index = float(last["et0"] - last["rain"])
 
     return drought_index
 
