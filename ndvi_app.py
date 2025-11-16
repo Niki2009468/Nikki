@@ -57,3 +57,6 @@ df_precip = pd.DataFrame({
     "Datum": days,
     "Niederschlag": precip
 })
+
+st.subheader("🌧 Niederschlag (mm)")
+st.bar_chart(df_precip, x="Datum", y="Niederschlag")
