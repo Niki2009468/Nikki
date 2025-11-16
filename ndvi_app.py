@@ -1,9 +1,16 @@
 import streamlit as st
 import requests
+import pandas as pd
 
-st.set_page_config(page_title="AcriRisk – Live Klima Daten", layout="wide")
+# Seiteneinstellungen
+st.set_page_config(
+    page_title="AcriRisk – Live Klima Daten",
+    layout="wide"
+)
+
 st.title("🌱 Live Klima- & Wetterdaten für Agrarregionen")
 
+# Städte + Koordinaten
 cities = {
     "Darmstadt, Deutschland": (49.8728, 8.6512),
     "Malolos, Philippinen": (14.8549, 120.8100),
@@ -16,6 +23,7 @@ lat, lon = cities[city_name]
 
 st.write(f"**Koordinaten:** {lat}, {lon}")
 
+# Open-Meteo API
 url = (
     "https://api.open-meteo.com/v1/forecast"
     f"?latitude={lat}&longitude={lon}"
@@ -24,12 +32,31 @@ url = (
 )
 
 res = requests.get(url).json()
+
 days = res["daily"]["time"]
 temp_max = res["daily"]["temperature_2m_max"]
 precip = res["daily"]["precipitation_sum"]
 
+# ----------------------------------------
+# 📈 Temperatur Chart (DataFrame nötig!)
+# ----------------------------------------
+
+df_temp = pd.DataFrame({
+    "Datum": days,
+    "Temperatur": temp_max
+})
+
 st.subheader("📈 Max. Temperatur (°C)")
-st.line_chart({"Temperatur": temp_max}, x=days)
+st.line_chart(df_temp, x="Datum", y="Temperatur")
+
+# ----------------------------------------
+# 🌧 Niederschlags-Chart
+# ----------------------------------------
+
+df_precip = pd.DataFrame({
+    "Datum": days,
+    "Niederschlag": precip
+})
 
 st.subheader("🌧 Niederschlag (mm)")
-st.bar_chart({"Niederschlag": precip}, x=days)
+st.bar_chart(df_precip, x="Datum", y="Niederschlag")
