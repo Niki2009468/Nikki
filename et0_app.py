@@ -58,52 +58,10 @@ daily = res["daily"]
 # Werte extrahieren
 # -----------------------------------------------------------------------------------
 days = daily["time"]
-temp_max = daily["temperature_2m_max"]
-precip = daily["precipitation_sum"]
 et0 = daily["et0_fao_evapotranspiration"]  # mm/Tag
 
 # -----------------------------------------------------------------------------------
-# DataFrames bauen
-# -----------------------------------------------------------------------------------
-df_temp = pd.DataFrame({
-    "Datum": days,
-    "Max. Temperatur (°C)": temp_max
-})
 
-df_precip = pd.DataFrame({
-    "Datum": days,
-    "Niederschlag (mm)": precip
-})
-
-df_et0 = pd.DataFrame({
-    "Datum": days,
-    "ET₀ (mm)": et0
-})
-
-# -----------------------------------------------------------------------------------
-# Charts anzeigen
-# -----------------------------------------------------------------------------------
-st.markdown("### 🔎 Überblick (7-Tage-Vorhersage)")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.subheader("📈 Max. Temperatur (°C)")
-    st.line_chart(df_temp, x="Datum", y="Max. Temperatur (°C)")
-    st.metric(
-        "Letzter Wert (°C)",
-        f"{temp_max[-1]:.1f}",
-        help="Maximale Temperatur am letzten Vorhersagetag"
-    )
-
-with col2:
-    st.subheader("🌧 Niederschlag (mm)")
-    st.bar_chart(df_precip, x="Datum", y="Niederschlag (mm)")
-    st.metric(
-        "Summe (7 Tage)",
-        f"{sum(precip):.1f} mm",
-        help="Gesamtniederschlag über die nächsten 7 Tage"
-    )
 
 st.markdown("### 💧 Wasserbedarf & Verdunstung")
 
