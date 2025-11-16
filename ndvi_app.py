@@ -28,15 +28,16 @@ lat, lon = cities[city_name]
 st.write(f"**Koordinaten:** {lat}, {lon}")
 
 # -----------------------------------------------------------------------------------
-# Open-Meteo API-URL (korrekte Parameter)
-# ACHTUNG: soil_moisture_0_7cm ist korrekt
+# Open-Meteo API-URL (nur gültige daily-Variablen)
+#  - temperature_2m_max
+#  - precipitation_sum
+#  - et0_fao_evapotranspiration  -> Referenz-Evapotranspiration (ET₀)
 # -----------------------------------------------------------------------------------
 url = (
     "https://api.open-meteo.com/v1/forecast"
     f"?latitude={lat}&longitude={lon}"
-    "&daily=temperature_2m_max,precipitation_sum,soil_moisture_0_7cm,evapotranspiration"
+    "&daily=temperature_2m_max,precipitation_sum,et0_fao_evapotranspiration"
     "&forecast_days=7"
-    "&models=best_match"
     "&timezone=auto"
 )
 
@@ -59,8 +60,7 @@ daily = res["daily"]
 days = daily["time"]
 temp_max = daily["temperature_2m_max"]
 precip = daily["precipitation_sum"]
-soil = daily["soil_moisture_0_7cm"]
-et0 = daily["evapotranspiration"]
+et0 = daily["et0_fao_evapotranspiration"]  # mm/Tag
 
 # -----------------------------------------------------------------------------------
 # DataFrames bauen
@@ -75,14 +75,9 @@ df_precip = pd.DataFrame({
     "Niederschlag (mm)": precip
 })
 
-df_soil = pd.DataFrame({
-    "Datum": days,
-    "Bodenfeuchte 0–7 cm (m³/m³)": soil
-})
-
 df_et0 = pd.DataFrame({
     "Datum": days,
-    "Evapotranspiration (mm)": et0
+    "ET₀ (mm)": et0
 })
 
 # -----------------------------------------------------------------------------------
@@ -110,32 +105,20 @@ with col2:
         help="Gesamtniederschlag über die nächsten 7 Tage"
     )
 
-st.markdown("### 🧪 Boden & Wasserbilanz")
+st.markdown("### 💧 Wasserbedarf & Verdunstung")
 
-col3, col4 = st.columns(2)
-
-with col3:
-    st.subheader("🌱 Bodenfeuchte 0–7 cm (m³/m³)")
-    st.line_chart(df_soil, x="Datum", y="Bodenfeuchte 0–7 cm (m³/m³)")
-    st.metric(
-        "Letzter Wert Bodenfeuchte",
-        f"{soil[-1]:.2f}",
-        help="Oberflächennahe Bodenfeuchte (0–7 cm) am letzten Vorhersagetag"
-    )
-
-with col4:
-    st.subheader("💧 Evapotranspiration (mm)")
-    st.line_chart(df_et0, x="Datum", y="Evapotranspiration (mm)")
-    st.metric(
-        "Letzter Wert ET₀",
-        f"{et0[-1]:.2f} mm",
-        help="Referenz-Evapotranspiration am letzten Vorhersagetag"
-    )
+st.subheader("💨 Referenz-Evapotranspiration ET₀ (mm/Tag)")
+st.line_chart(df_et0, x="Datum", y="ET₀ (mm)")
+st.metric(
+    "Letzter Wert ET₀",
+    f"{et0[-1]:.2f} mm",
+    help="Tägliche Referenz-Evapotranspiration am letzten Vorhersagetag"
+)
 
 st.markdown(
     """
     **Quelle:** Alle Daten stammen live von der [Open-Meteo API](https://open-meteo.com/).  
-    Bodenfeuchte und Evapotranspiration sind wichtige Kenngrößen zur Abschätzung von
-    Dürre, Wasserstress und Ertragspotenzial.
+    ET₀ beschreibt, wie viel Wasser eine gut bewässerte Referenzgrasfläche pro Tag verdunsten würde
+    und ist ein zentraler Indikator für Bewässerungsbedarf und Trockenstress.
     """
 )
