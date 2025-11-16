@@ -2,10 +2,15 @@ import streamlit as st
 import requests
 import pandas as pd
 
-st.set_page_config(page_title="AcriRisk – Live Klima Daten", layout="wide")
+# Seiteneinstellungen
+st.set_page_config(
+    page_title="AcriRisk – Live Klima Daten",
+    layout="wide"
+)
 
 st.title("🌱 Live Klima- & Wetterdaten für Agrarregionen")
 
+# Städte + Koordinaten
 cities = {
     "Darmstadt, Deutschland": (49.8728, 8.6512),
     "Malolos, Philippinen": (14.8549, 120.8100),
@@ -18,63 +23,40 @@ lat, lon = cities[city_name]
 
 st.write(f"**Koordinaten:** {lat}, {lon}")
 
-# --- KORREKTE Open-Meteo Variablen ---
-# ✔ temperature_2m          → normale Temperatur
-# ✔ precipitation_sum       → Niederschlag
-# ✔ et0                     → Referenz-Evapotranspiration
-
+# Open-Meteo API
 url = (
     "https://api.open-meteo.com/v1/forecast"
     f"?latitude={lat}&longitude={lon}"
-    "&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean,precipitation_sum,et0"
+    "&daily=temperature_2m_max,precipitation_sum"
     "&forecast_days=7&timezone=auto"
 )
 
 res = requests.get(url).json()
 
-if "daily" not in res:
-    st.error("❌ API liefert keine täglichen Daten.")
-    st.json(res)
-    st.stop()
+days = res["daily"]["time"]
+temp_max = res["daily"]["temperature_2m_max"]
+precip = res["daily"]["precipitation_sum"]
 
-daily = res["daily"]
+# ----------------------------------------
+# 📈 Temperatur Chart (DataFrame nötig!)
+# ----------------------------------------
 
-# Temperatur-Normalwert: wir nehmen temperature_2m_mean (DAS wolltest du)
-temperature = daily["temperature_2m_mean"]
-
-days = daily["time"]
-precip = daily["precipitation_sum"]
-et0 = daily["et0"]
-
-# ----------------------------
-# 📈 Temperatur
-# ----------------------------
 df_temp = pd.DataFrame({
     "Datum": days,
-    "Temperatur (°C)": temperature
+    "Temperatur": temp_max
 })
 
-st.subheader("🌡 Temperatur (°C)")
-st.line_chart(df_temp, x="Datum", y="Temperatur (°C)")
+st.subheader("📈 Max. Temperatur (°C)")
+st.line_chart(df_temp, x="Datum", y="Temperatur")
 
-# ----------------------------
-# 🌧 Niederschlag
-# ----------------------------
+# ----------------------------------------
+# 🌧 Niederschlags-Chart
+# ----------------------------------------
+
 df_precip = pd.DataFrame({
     "Datum": days,
-    "Niederschlag (mm)": precip
+    "Niederschlag": precip
 })
 
 st.subheader("🌧 Niederschlag (mm)")
-st.bar_chart(df_precip, x="Datum", y="Niederschlag (mm)")
-
-# ----------------------------
-# 💧 ET₀ – Referenz-Evapotranspiration
-# ----------------------------
-df_et0 = pd.DataFrame({
-    "Datum": days,
-    "ET₀ (mm)": et0
-})
-
-st.subheader("💦 Referenz-Evapotranspiration ET₀ (mm/Tag)")
-st.line_chart(df_et0, x="Datum", y="ET₀ (mm)")
+st.bar_chart(df_precip, x="Datum", y="Niederschlag")
