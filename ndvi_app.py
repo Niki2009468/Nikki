@@ -36,7 +36,6 @@ res = requests.get(url).json()
 days = res["daily"]["time"]
 temp_max = res["daily"]["temperature_2m_max"]
 precip = res["daily"]["precipitation_sum"]
-et0 = res["daily"]["et0_fao_evapotranspiration"]
 
 # ----------------------------------------
 # 📈 Temperatur Chart (DataFrame nötig!)
@@ -58,18 +57,3 @@ df_precip = pd.DataFrame({
     "Datum": days,
     "Niederschlag": precip
 })
-
-# ----------------------------------------
-# 💧 ET0 – Referenz-Evapotranspiration
-# ----------------------------------------
-
-df_et0 = pd.DataFrame({
-    "Datum": days,
-    "ET0 (mm)": et0
-})
-
-st.subheader("💦 Referenz-Evapotranspiration ET₀ (mm/Tag)")
-st.line_chart(df_et0, x="Datum", y="ET0 (mm)")
-
-st.subheader("🌧 Niederschlag (mm)")
-st.bar_chart(df_precip, x="Datum", y="Niederschlag")
