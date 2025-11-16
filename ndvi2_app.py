@@ -1,95 +1,77 @@
 import streamlit as st
 import requests
-import pandas as pd
+import datetime
 
-# ------------------------------------------------------
-# Seiteneinstellungen
-# ------------------------------------------------------
-st.set_page_config(
-    page_title="NDVI – Vegetationsindex",
-    layout="wide"
-)
+st.set_page_config(page_title="NDVI Dashboard", layout="centered")
 
-st.title("🌿 NDVI – Vegetationsvitalität (Vegetation Index)")
+st.title("🌱 NDVI Analyse – NASA MODIS Subset API")
 
-# ------------------------------------------------------
-# Städte & Koordinaten
-# ------------------------------------------------------
+
+# 1. Deine Städte
 cities = {
     "Darmstadt, Deutschland": (49.8728, 8.6512),
-    "Malolos, Philippinen": (14.8549, 120.8100),
-    "Fortaleza, Brasilien": (-3.7319, -38.5267),
     "Tucson, USA": (32.2226, -110.9747),
+    "Fortaleza, Brasilien": (-3.7319, -38.5267),
+    "Malolos, Philippinen": (14.8443, 120.8114)
 }
 
-city_name = st.selectbox("Standort auswählen", list(cities.keys()))
-lat, lon = cities[city_name]
+city = st.selectbox("📍 Stadt auswählen", list(cities.keys()))
+lat, lon = cities[city]
 
-st.write(f"**Koordinaten:** {lat}, {lon}")
 
-# ------------------------------------------------------
-# NDVI API Request (Open-Meteo Vegetation API)
-# ------------------------------------------------------
-url = (
-    "https://api.open-meteo.com/v1/forecast"
-    f"?latitude={lat}&longitude={lon}"
-    "&daily=vegetation_index"
-    "&forecast_days=7"
-    "&timezone=auto"
-)
+# 2. Funktion, um NDVI abzurufen
+def get_ndvi(lat, lon):
+    url = (
+        f"https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset?"
+        f"latitude={lat}&longitude={lon}&band=250m_16_days_NDVI&startDate=AUTO&endDate=AUTO"
+    )
 
-response = requests.get(url)
-data = response.json()
+    try:
+        response = requests.get(url).json()
 
-# ------------------------------------------------------
-# Fehlerbehandlung
-# ------------------------------------------------------
-if "daily" not in data:
-    st.error("⚠️ API lieferte keine NDVI-Daten.")
-    st.write(data)
-    st.stop()
+        subset = response.get("subset", [])
+        if not subset:
+            return None, "Keine NDVI-Daten erhalten."
 
-daily = data["daily"]
+        # Neuestes Datum
+        entry = subset[-1]
+        raw_value = entry["value"]  # z.B. 6342
+        ndvi = raw_value / 10000    # normieren
+        date = entry["date"]
 
-if "vegetation_index" not in daily:
-    st.warning("⚠️ Für diesen Standort sind keine NDVI-Daten verfügbar.")
-    st.write(data)
-    st.stop()
+        return ndvi, date
 
-# ------------------------------------------------------
-# NDVI Daten extrahieren
-# ------------------------------------------------------
-dates = daily["time"]
-ndvi = daily["vegetation_index"]
+    except Exception as e:
+        return None, str(e)
 
-df_ndvi = pd.DataFrame({
-    "Datum": dates,
-    "NDVI": ndvi
-})
 
-# ------------------------------------------------------
-# NDVI Chart
-# ------------------------------------------------------
-st.subheader("🌱 NDVI – tägliche Vegetationsvitalität")
-st.line_chart(df_ndvi, x="Datum", y="NDVI")
+# 3. Button
+if st.button("📡 NDVI abrufen"):
+    with st.spinner("Lade NDVI-Daten von der NASA..."):
+        ndvi, date = get_ndvi(lat, lon)
 
-# ------------------------------------------------------
-# Kennzahl
-# ------------------------------------------------------
-st.metric(
-    "Letzter NDVI-Wert",
-    f"{ndvi[-1]:.2f}",
-    help="NDVI beschreibt die Vitalität und Photosyntheseaktivität der Vegetation."
-)
+        if ndvi is None:
+            st.error("Fehler beim Abruf der NDVI-Daten.")
+        else:
+            st.success(f"NDVI erfolgreich geladen ({date})")
 
-# ------------------------------------------------------
-# Info
-# ------------------------------------------------------
-st.markdown("""
-**Quelle:** Open-Meteo Vegetation Index API  
-NDVI-Werte reichen von **–1 bis +1** und zeigen die Vitalität der Vegetation:
-- < 0.20 → kaum Vegetation / Trockenheit  
-- 0.20 – 0.40 → mäßige Vegetation  
-- 0.40 – 0.60 → gesundes Wachstum  
-- > 0.60 → sehr vitale Vegetation  
-""")
+            # 4. NDVI-Wert anzeigen
+            st.metric(label=f"🌿 NDVI für {city}", value=f"{ndvi:.3f}")
+
+            # 5. Ampelsystem
+            def classify_ndvi(x):
+                if x < 0.2:
+                    return "🔴 Dürre / Sehr schlecht"
+                elif x < 0.4:
+                    return "🟠 Stress"
+                elif x < 0.6:
+                    return "🟡 Neutral / Leicht gestresst"
+                else:
+                    return "🟢 Optimal"
+
+            st.write("Vegetationszustand:", classify_ndvi(ndvi))
+
+            # Debug-Ausgabe
+            with st.expander("API-Rohdaten anzeigen"):
+                st.write("NDVI (roh):", ndvi)
+                st.write("Datum:", date)
