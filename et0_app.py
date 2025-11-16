@@ -85,3 +85,58 @@ st.markdown(
     - Wüstenregionen: **6 – 8+ mm/Tag**
     """
 )
+
+
+import pandas as pd
+
+st.subheader("🔥 Dürreindex (ET₀ – Niederschlag)")
+
+# --- Regen-Daten holen (Open-Meteo) ---
+rain_url = "https://api.open-meteo.com/v1/forecast"
+params_rain = {
+    "latitude": lat,
+    "longitude": lon,
+    "daily": "precipitation_sum",
+    "timezone": "auto"
+}
+
+rain_data = requests.get(rain_url, params=params_rain).json()
+rain_dates = rain_data["daily"]["time"]
+rain_values = rain_data["daily"]["precipitation_sum"]
+
+df_rain = pd.DataFrame({
+    "date": pd.to_datetime(rain_dates),
+    "rain": rain_values
+})
+
+# --- ET₀ Daten (aus deiner bestehenden Berechnung) ---
+df_et0["date"] = pd.to_datetime(df_et0["date"])
+
+# --- Zusammenführen ---
+df_combined = pd.merge(df_et0, df_rain, on="date", how="inner")
+
+# --- Dürreindex berechnen ---
+df_combined["drought"] = df_combined["et0"] - df_combined["rain"]
+
+# --- Klassifikation ---
+def classify_drought(x):
+    if x < 0:
+        return "🟢 Nass"
+    elif x < 1.5:
+        return "🟢 Normal"
+    elif x < 3:
+        return "🟠 Moderat"
+    else:
+        return "🔴 Stark"
+
+df_combined["status"] = df_combined["drought"].apply(classify_drought)
+
+# --- Plot ---
+st.line_chart(
+    df_combined.set_index("date")[["drought"]],
+    height=300
+)
+
+# --- Tabelle als Übersicht ---
+with st.expander("Details – Dürreindex"):
+    st.dataframe(df_combined)
