@@ -1,15 +1,20 @@
-import streamlit as st
+mport streamlit as st
 import requests
 import pandas as pd
 
+# -----------------------------------------------------------------------------------
+# Seiteneinstellungen
+# -----------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="ET0 – Referenzverdunstung",
+    page_title="AcriRisk – Live Klima Daten",
     layout="wide"
 )
 
-st.title("💧 Referenz-Evapotranspiration ET₀ (FAO)")
+st.title("🌱 Live Klima- & Wetterdaten für Agrarregionen")
 
-# Standorte
+# -----------------------------------------------------------------------------------
+# Städte + Koordinaten
+# -----------------------------------------------------------------------------------
 cities = {
     "Darmstadt, Deutschland": (49.8728, 8.6512),
     "Malolos, Philippinen": (14.8549, 120.8100),
@@ -22,32 +27,98 @@ lat, lon = cities[city_name]
 
 st.write(f"**Koordinaten:** {lat}, {lon}")
 
-# ET0 API CALL
-url_et0 = (
-    "https://api.open-meteo.com/v1/agrometeo"
+# -----------------------------------------------------------------------------------
+# Open-Meteo API-URL (nur gültige daily-Variablen)
+#  - temperature_2m_max
+#  - precipitation_sum
+#  - et0_fao_evapotranspiration  -> Referenz-Evapotranspiration (ET₀)
+# -----------------------------------------------------------------------------------
+url = (
+    "https://api.open-meteo.com/v1/forecast"
     f"?latitude={lat}&longitude={lon}"
-    "&daily=et0_fao_evapotranspiration"
-    "&timezone=auto&forecast_days=7"
+    "&daily=temperature_2m_max,precipitation_sum,et0_fao_evapotranspiration"
+    "&forecast_days=7"
+    "&timezone=auto"
 )
 
-res_et0 = requests.get(url_et0).json()
+# -----------------------------------------------------------------------------------
+# API Anfrage
+# -----------------------------------------------------------------------------------
+res = requests.get(url).json()
 
-# Prüfen
-if "daily" not in res_et0 or "et0_fao_evapotranspiration" not in res_et0["daily"]:
-    st.error("⚠️ Für diesen Standort sind keine ET₀-Daten verfügbar.")
-    st.json(res_et0)
-else:
-    et0_days = res_et0["daily"]["time"]
-    et0_values = res_et0["daily"]["et0_fao_evapotranspiration"]
+# Defensive Fehlerprüfung
+if "daily" not in res:
+    st.error("⚠️ Fehler: Die API hat keine täglichen Wetterdaten zurückgegeben.")
+    st.write("Antwort von der API:", res)
+    st.stop()
 
-    df_et0 = pd.DataFrame({
-        "Datum": et0_days,
-        "ET0 (mm)": et0_values
-    })
+daily = res["daily"]
 
-    st.subheader("📈 ET₀ (mm/Tag)")
-    st.line_chart(df_et0, x="Datum", y="ET0 (mm)")
+# -----------------------------------------------------------------------------------
+# Werte extrahieren
+# -----------------------------------------------------------------------------------
+days = daily["time"]
+temp_max = daily["temperature_2m_max"]
+precip = daily["precipitation_sum"]
+et0 = daily["et0_fao_evapotranspiration"]  # mm/Tag
 
-    st.metric("Letzter ET₀ Wert", f"{et0_values[-1]} mm")
+# -----------------------------------------------------------------------------------
+# DataFrames bauen
+# -----------------------------------------------------------------------------------
+df_temp = pd.DataFrame({
+    "Datum": days,
+    "Max. Temperatur (°C)": temp_max
+})
 
-    st.caption("Datenquelle: Open-Meteo Agrometeorology API")
+df_precip = pd.DataFrame({
+    "Datum": days,
+    "Niederschlag (mm)": precip
+})
+
+df_et0 = pd.DataFrame({
+    "Datum": days,
+    "ET₀ (mm)": et0
+})
+
+# -----------------------------------------------------------------------------------
+# Charts anzeigen
+# -----------------------------------------------------------------------------------
+st.markdown("### 🔎 Überblick (7-Tage-Vorhersage)")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("📈 Max. Temperatur (°C)")
+    st.line_chart(df_temp, x="Datum", y="Max. Temperatur (°C)")
+    st.metric(
+        "Letzter Wert (°C)",
+        f"{temp_max[-1]:.1f}",
+        help="Maximale Temperatur am letzten Vorhersagetag"
+    )
+
+with col2:
+    st.subheader("🌧 Niederschlag (mm)")
+    st.bar_chart(df_precip, x="Datum", y="Niederschlag (mm)")
+    st.metric(
+        "Summe (7 Tage)",
+        f"{sum(precip):.1f} mm",
+        help="Gesamtniederschlag über die nächsten 7 Tage"
+    )
+
+st.markdown("### 💧 Wasserbedarf & Verdunstung")
+
+st.subheader("💨 Referenz-Evapotranspiration ET₀ (mm/Tag)")
+st.line_chart(df_et0, x="Datum", y="ET₀ (mm)")
+st.metric(
+    "Letzter Wert ET₀",
+    f"{et0[-1]:.2f} mm",
+    help="Tägliche Referenz-Evapotranspiration am letzten Vorhersagetag"
+)
+
+st.markdown(
+    """
+    **Quelle:** Alle Daten stammen live von der [Open-Meteo API](https://open-meteo.com/).  
+    ET₀ beschreibt, wie viel Wasser eine gut bewässerte Referenzgrasfläche pro Tag verdunsten würde
+    und ist ein zentraler Indikator für Bewässerungsbedarf und Trockenstress.
+    """
+)
