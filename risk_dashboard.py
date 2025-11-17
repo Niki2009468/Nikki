@@ -1,14 +1,16 @@
 import streamlit as st
-import requests
 import pandas as pd
+import requests
 import statistics
 
 # -----------------------------------------------------------
-# PAGE SETUP
+# STREAMLIT GRUNDEINSTELLUNG
 # -----------------------------------------------------------
-st.set_page_config(page_title="🌍 Risiko-Dashboard", layout="wide")
-st.title("🌍 Globales Risiko-Dashboard")
-st.write("Integratives Vegetations-, Dürre- und Überflutungsmodell")
+st.set_page_config(
+    page_title="Globales Risiko-Dashboard",
+    page_icon="🌍",
+    layout="wide",
+)
 
 # -----------------------------------------------------------
 # STANDORTE
@@ -20,62 +22,135 @@ CITIES = {
     "Malolos, Philippinen": (14.8443, 120.8114),
 }
 
-city = st.selectbox("📍 Standort auswählen", list(CITIES.keys()))
-lat, lon = CITIES[city]
+CITY_CLIMATE = {
+    "Darmstadt, Deutschland": "temperate",
+    "Tucson, USA": "semi_arid",
+    "Fortaleza, Brasilien": "tropical_humid",
+    "Malolos, Philippinen": "tropical_monsoon",
+}
+
+# Klimaspezifische Parameter für das Risikomodell
+CLIMATE_CONFIG = {
+    "temperate": {
+        "ndvi_opt": 0.60,
+        "ndvi_min": 0.20,
+        "drought_low": 0.5,
+        "drought_high": 3.0,
+        "flood_p3h_med": 10,
+        "flood_p3h_high": 25,
+        "flood_p24h_med": 20,
+        "flood_p24h_high": 50,
+    },
+    "semi_arid": {
+        "ndvi_opt": 0.40,
+        "ndvi_min": 0.10,
+        "drought_low": 2.0,
+        "drought_high": 6.0,
+        "flood_p3h_med": 5,
+        "flood_p3h_high": 15,
+        "flood_p24h_med": 10,
+        "flood_p24h_high": 30,
+    },
+    "tropical_humid": {
+        "ndvi_opt": 0.80,
+        "ndvi_min": 0.40,
+        "drought_low": 1.0,
+        "drought_high": 5.0,
+        "flood_p3h_med": 10,
+        "flood_p3h_high": 30,
+        "flood_p24h_med": 25,
+        "flood_p24h_high": 80,
+    },
+    "tropical_monsoon": {
+        "ndvi_opt": 0.75,
+        "ndvi_min": 0.35,
+        "drought_low": 1.0,
+        "drought_high": 5.0,
+        "flood_p3h_med": 8,
+        "flood_p3h_high": 25,
+        "flood_p24h_med": 20,
+        "flood_p24h_high": 70,
+    },
+}
 
 # -----------------------------------------------------------
-# 1) NDVI FETCH (NASA MODIS)
+# HILFSFUNKTIONEN
+# -----------------------------------------------------------
+def clamp01(x: float) -> float:
+    return max(0.0, min(1.0, float(x)))
+
+
+def risk_label(score_0_100: float) -> str:
+    if score_0_100 < 20:
+        return "🟢 Niedrig"
+    elif score_0_100 < 40:
+        return "🟡 Leicht erhöht"
+    elif score_0_100 < 65:
+        return "🟠 Erhöht"
+    elif score_0_100 < 85:
+        return "🔴 Hoch"
+    else:
+        return "🟥 Extrem"
+
+
+# -----------------------------------------------------------
+# NDVI – NASA MODIS (wie in deiner NDVI2-App)
 # -----------------------------------------------------------
 BASE = "https://modis.ornl.gov/rst/api/v1"
-PRODUCT = "MOD13Q1"
+PRODUCT = "MOD13Q1"  # 16-Tage NDVI
+
 
 def fetch(url, params):
     try:
-        r = requests.get(url, params=params, timeout=20)
+        r = requests.get(url, params=params, timeout=25)
         if r.status_code != 200:
-            return None
-        return r.json()
-    except:
-        return None
+            return None, f"Status {r.status_code}"
+        return r.json(), None
+    except Exception as e:
+        return None, str(e)
+
 
 def get_current_ndvi(lat, lon):
-    # MODIS Dates
-    d = fetch(f"{BASE}/{PRODUCT}/dates", {"latitude": lat, "longitude": lon})
-    if not d:
+    # 1) verfügbare MODIS-Daten finden
+    dates_url = f"{BASE}/{PRODUCT}/dates"
+    dates_data, err = fetch(dates_url, {"latitude": lat, "longitude": lon})
+    if err or not dates_data:
         return None
-    latest = d["dates"][-1]
-    modis_date = latest["modis_date"]
 
-    # NDVI fetch
-    data = fetch(f"{BASE}/{PRODUCT}/subset", {
+    last_date = dates_data["dates"][-1]["modis_date"]
+
+    # 2) NDVI für letztes Datum holen
+    subset_url = f"{BASE}/{PRODUCT}/subset"
+    params = {
         "latitude": lat,
         "longitude": lon,
-        "startDate": modis_date,
-        "endDate": modis_date,
+        "startDate": last_date,
+        "endDate": last_date,
         "kmAboveBelow": 0,
-        "kmLeftRight": 0
-    })
-
-    if not data:
+        "kmLeftRight": 0,
+    }
+    data, err = fetch(subset_url, params)
+    if err or not data:
         return None
 
-    for band in data["subset"]:
-        if band["band"] == "250m_16_days_NDVI":
-            raw_mean = statistics.fmean(band["data"])
-            return raw_mean * 0.0001  # scale factor
+    for band in data.get("subset", []):
+        if band.get("band") == "250m_16_days_NDVI":
+            raw_vals = band.get("data", [])
+            if not raw_vals:
+                return None
+            # Unskaliert → skaliert (Faktor 0.0001)
+            ndvi = statistics.fmean(raw_vals) * 0.0001
+            return ndvi
 
     return None
 
 
 # -----------------------------------------------------------
-# 2) DÜRREINDEX (ET0 - REGEN)
+# DÜRREINDEX – Open-Meteo (ET0 – Niederschlag)
 # -----------------------------------------------------------
-
 def get_drought(lat, lon):
     """
-    Berechnet den Dürreindex für den letzten vollständigen Tag:
-    Dürreindex = ET0 (mm/Tag) - Niederschlag (mm/Tag)
-    Datenquelle: Open-Meteo (stündliche ET0 + täglicher Niederschlag)
+    Dürreindex = ET0 - Niederschlag (mm/Tag) für den letzten vollständigen Tag.
     """
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -87,45 +162,49 @@ def get_drought(lat, lon):
         "past_days": 3,
         "forecast_days": 0,
     }
+    r = requests.get(url, params=params, timeout=25)
+    data = r.json()
 
-    data = requests.get(url, params=params, timeout=20).json()
-
-    # --- ET0: stündlich -> täglich summieren ---
+    # ET0 stündlich → täglich
     hourly = data["hourly"]
-    df_hourly = pd.DataFrame({
-        "time": pd.to_datetime(hourly["time"]),
-        "et0": hourly["et0_fao_evapotranspiration"],
-    })
-    # Nur das Datum extrahieren (ohne Uhrzeit)
+    df_hourly = pd.DataFrame(
+        {
+            "time": pd.to_datetime(hourly["time"]),
+            "et0": hourly["et0_fao_evapotranspiration"],
+        }
+    )
     df_hourly["date"] = df_hourly["time"].dt.normalize()
-
     df_et0_daily = (
         df_hourly.groupby("date", as_index=False)["et0"]
         .sum()
         .sort_values("date")
     )
 
-    # --- Niederschlag: tägliche Summen ---
+    # Regen täglich
     daily = data["daily"]
-    df_rain = pd.DataFrame({
-        "date": pd.to_datetime(daily["time"]),
-        "rain": daily["precipitation_sum"],
-    }).sort_values("date")
+    df_rain = pd.DataFrame(
+        {
+            "date": pd.to_datetime(daily["time"]),
+            "rain": daily["precipitation_sum"],
+        }
+    ).sort_values("date")
 
-    # --- ET0 & Regen mergen ---
     df = pd.merge(df_et0_daily, df_rain, on="date", how="inner")
-
-    # Letzter Tag
     last = df.iloc[-1]
     drought_index = float(last["et0"] - last["rain"])
-
     return drought_index
 
 
 # -----------------------------------------------------------
-# 3) ÜBERFLUTUNGSINDEX (1h, 3h, 24h)
+# ÜBERFLUTUNG – Open-Meteo (Starkregen)
 # -----------------------------------------------------------
 def get_flood(lat, lon):
+    """
+    Liefert:
+    - Niederschlag letzte Stunde (mm)
+    - 3h-Summe (mm)
+    - 24h-Summe (mm)
+    """
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
@@ -134,91 +213,163 @@ def get_flood(lat, lon):
         "daily": "precipitation_sum",
         "timezone": "auto",
         "past_days": 2,
-        "forecast_days": 0
+        "forecast_days": 0,
     }
-    data = requests.get(url, params).json()
+    r = requests.get(url, params=params, timeout=25)
+    data = r.json()
 
-    df = pd.DataFrame({
-        "time": pd.to_datetime(data["hourly"]["time"]),
-        "p1h": data["hourly"]["precipitation"]
-    })
+    df = pd.DataFrame(
+        {
+            "time": pd.to_datetime(data["hourly"]["time"]),
+            "p1h": data["hourly"]["precipitation"],
+        }
+    ).sort_values("time")
+
     df["p3h"] = df["p1h"].rolling(3).sum()
 
-    # last valid 3h
-    row = df.dropna().iloc[-1]
-    return row["p1h"], row["p3h"], data["daily"]["precipitation_sum"][-1]
+    last_row = df.dropna().iloc[-1]
+    p1h = float(last_row["p1h"])
+    p3h = float(last_row["p3h"])
+
+    # 24h aus daily
+    p24h = float(data["daily"]["precipitation_sum"][-1])
+
+    return p1h, p3h, p24h
 
 
 # -----------------------------------------------------------
-# RISK SCORING (0–3)
+# RISIKO-FUNKTIONEN (0–1 Skala)
 # -----------------------------------------------------------
-def score_ndvi(ndvi):
-    if ndvi is None:
-        return 2
-    if ndvi > 0.6: return 0
-    if ndvi > 0.4: return 1
-    if ndvi > 0.2: return 2
-    return 3
-
-def score_drought(d):
-    if d < 0: return 0
-    if d < 1.5: return 1
-    if d < 3: return 2
-    return 3
-
-def score_flood(p3h, p24h):
-    if p3h < 10 and p24h < 20:
-        return 0
-    if p3h < 20 or p24h < 50:
-        return 2
-    return 3
+def veg_risk_0_1(ndvi: float, cfg: dict) -> float:
+    """Vegetationsrisiko (0 = optimal, 1 = stark gestresst)."""
+    ndvi_opt = cfg["ndvi_opt"]
+    ndvi_min = cfg["ndvi_min"]
+    risk = (ndvi_opt - ndvi) / (ndvi_opt - ndvi_min)
+    return clamp01(risk)
 
 
-# -----------------------------------------------------------
-# FETCH ALL THREE MODULES
-# -----------------------------------------------------------
-with st.spinner("Lade Risikoindikatoren…"):
+def drought_risk_0_1(d: float, cfg: dict) -> float:
+    """Dürre-Risiko basierend auf ET0 - Regen."""
+    low = cfg["drought_low"]
+    high = cfg["drought_high"]
+    if d <= low:
+        return 0.0
+    risk = (d - low) / (high - low)
+    return clamp01(risk)
+
+
+def flood_risk_0_1(p3h: float, p24h: float, cfg: dict) -> float:
+    """Flutrisiko, kombiniert aus 3h- und 24h-Regensummen."""
+    p3_med = cfg["flood_p3h_med"]
+    p3_high = cfg["flood_p3h_high"]
+    p24_med = cfg["flood_p24h_med"]
+    p24_high = cfg["flood_p24h_high"]
+
+    flash = 0.0
+    if p3h >= p3_med:
+        flash = (p3h - p3_med) / (p3_high - p3_med)
+    flash = clamp01(flash)
+
+    daily = 0.0
+    if p24h >= p24_med:
+        daily = (p24h - p24_med) / (p24_high - p24_med)
+    daily = clamp01(daily)
+
+    return max(flash, daily)
+
+
+# ===========================================================
+# STREAMLIT UI – DASHBOARD
+# ===========================================================
+st.title("🌍 Globales Risiko-Dashboard")
+st.caption("Integratives Vegetations-, Dürre- und Überflutungsmodell auf Basis von NASA MODIS & Open-Meteo")
+
+city = st.selectbox("📍 Standort auswählen", list(CITIES.keys()))
+lat, lon = CITIES[city]
+st.write(f"Koordinaten: `{lat:.4f}, {lon:.4f}`")
+
+climate_type = CITY_CLIMATE.get(city, "temperate")
+cfg = CLIMATE_CONFIG[climate_type]
+
+with st.spinner("Lade aktuelle Risikoindikatoren …"):
     ndvi = get_current_ndvi(lat, lon)
     drought = get_drought(lat, lon)
     p1h, p3h, p24h = get_flood(lat, lon)
 
-# -----------------------------------------------------------
-# RISK SCORES
-# -----------------------------------------------------------
-veg_score = score_ndvi(ndvi)
-drought_score = score_drought(drought)
-flood_score = score_flood(p3h, p24h)
+# Sicherheits-Defaults, falls etwas None ist
+if ndvi is None:
+    ndvi = cfg["ndvi_min"]
+    ndvi_note = "NDVI konnte nicht geladen werden – Schätzwert verwendet."
+else:
+    ndvi_note = None
 
-total_score = max(veg_score, drought_score, flood_score)
+# Einzelrisiken 0–1
+veg_risk = veg_risk_0_1(ndvi, cfg)
+drought_risk = drought_risk_0_1(drought, cfg)
+flood_risk = flood_risk_0_1(p3h, p24h, cfg)
 
-AMP = {
-    0: "🟢 Gering",
-    1: "🟡 Leicht",
-    2: "🟠 Mittel",
-    3: "🔴 Hoch"
-}
+# Scores 0–100
+veg_score = round(veg_risk * 100)
+drought_score = round(drought_risk * 100)
+flood_score = round(flood_risk * 100)
+
+# Gesamt-Risiko (Gewichtung)
+W_VEG, W_DROUGHT, W_FLOOD = 0.35, 0.40, 0.25
+total_risk_0_1 = W_VEG * veg_risk + W_DROUGHT * drought_risk + W_FLOOD * flood_risk
+total_score = round(total_risk_0_1 * 100)
 
 # -----------------------------------------------------------
-# VISUAL OUTPUT
+# AUSGABE – KPI-CARDS
 # -----------------------------------------------------------
-st.header("📊 Gesamtrisiko")
+st.markdown("### 📊 Gesamtrisiko")
 
-st.metric("Gesamt-Risiko", AMP[total_score])
+col_total, _, _ = st.columns([2, 1, 1])
+with col_total:
+    st.metric("Gesamt-Risiko-Score", f"{total_score}/100")
+    st.write("Einstufung:", risk_label(total_score))
+    st.write(f"Klimazone: **{climate_type}**")
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    st.subheader("🌱 Vegetation (NDVI)")
-    st.metric("NDVI", f"{ndvi:.3f}" if ndvi else "–")
-    st.write("Risiko:", AMP[veg_score])
+    st.markdown("#### 🌱 Vegetation (NDVI)")
+    st.metric("NDVI (aktuell)", f"{ndvi:.3f}")
+    st.write(f"Risiko-Score: **{veg_score}/100**")
+    st.write("Einstufung:", risk_label(veg_score))
+    if ndvi_note:
+        st.caption(ndvi_note)
 
 with col2:
-    st.subheader("🔥 Dürreindex")
-    st.metric("ET₀ – Regen", f"{drought:.2f} mm")
-    st.write("Risiko:", AMP[drought_score])
+    st.markdown("#### 🔥 Dürreindex (ET₀ – Niederschlag)")
+    st.metric("Dürreindex", f"{drought:.2f} mm")
+    st.write(f"Risiko-Score: **{drought_score}/100**")
+    st.write("Einstufung:", risk_label(drought_score))
 
 with col3:
-    st.subheader("🌊 Überflutung")
+    st.markdown("#### 🌊 Überflutungsrisiko")
     st.metric("3h Regen", f"{p3h:.1f} mm")
     st.metric("24h Regen", f"{p24h:.1f} mm")
-    st.write("Risiko:", AMP[flood_score])
+    st.write(f"Risiko-Score: **{flood_score}/100**")
+    st.write("Einstufung:", risk_label(flood_score))
+
+# -----------------------------------------------------------
+# DETAIL-INFOS
+# -----------------------------------------------------------
+with st.expander("🔍 Details zum Risikomodell & Schwellenwerten"):
+    st.markdown(
+        f"""
+        **Klimakonfiguration für {city} ({climate_type}):**
+        
+        - Optimaler NDVI: `{cfg['ndvi_opt']}`
+        - Kritischer NDVI: `{cfg['ndvi_min']}`
+        - Dürre-Bereich (ET₀ - Regen): `{cfg['drought_low']}–{cfg['drought_high']} mm/Tag`
+        - Flut (3h): moderat ab `{cfg['flood_p3h_med']} mm`, hoch ab `{cfg['flood_p3h_high']} mm`
+        - Flut (24h): moderat ab `{cfg['flood_p24h_med']} mm`, hoch ab `{cfg['flood_p24h_high']} mm`
+        
+        **Gewichtungen im Gesamtrisiko:**
+        
+        - Vegetation: **{int(W_VEG*100)} %**
+        - Dürre: **{int(W_DROUGHT*100)} %**
+        - Überflutung: **{int(W_FLOOD*100)} %**
+        """
+    )
